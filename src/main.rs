@@ -15,9 +15,9 @@ mod tree;
 #[derive(Parser, Debug)]
 #[command(name = "hfm", about = "Huffman encoding/decoding for files")]
 struct Cli {
-    source: PathBuf,
     #[command(flatten)]
     mode: Mode,
+    source: PathBuf,
     output: PathBuf,
 }
 
