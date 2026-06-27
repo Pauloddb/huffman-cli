@@ -7,8 +7,8 @@ use std::{
 
 use bitvec::{order::Msb0, vec::BitVec};
 
-pub type EncodeMap = HashMap<char, String>; // símbolo → código (para codificar)
-pub type DecodeMap = HashMap<String, char>; // código → símbolo (para decodificar)
+pub type EncodeMap = HashMap<u8, String>; // símbolo → código (para codificar)
+pub type DecodeMap = HashMap<String, u8>; // código → símbolo (para decodificar)
 
 #[derive(Debug, Clone)]
 pub enum HuffmanNode {
@@ -19,7 +19,7 @@ pub enum HuffmanNode {
     },
     Leaf {
         freq: usize,
-        symbol: char,
+        symbol: u8,
     },
 }
 
@@ -54,10 +54,10 @@ impl Ord for HuffmanNode {
     }
 }
 
-pub fn build_huffman_tree(text: &str) -> Option<HuffmanNode> {
-    let mut freq_table = HashMap::<char, usize>::new();
-    for ch in text.chars() {
-        *freq_table.entry(ch).or_insert(0) += 1;
+pub fn build_huffman_tree(data: &[u8]) -> Option<HuffmanNode> {
+    let mut freq_table = HashMap::<u8, usize>::new();
+    for byte in data.iter() {
+        *freq_table.entry(*byte).or_insert(0) += 1;
     }
 
     let mut heap = freq_table
@@ -78,7 +78,12 @@ pub fn build_huffman_tree(text: &str) -> Option<HuffmanNode> {
 pub fn generate_codes(node: &HuffmanNode, prefix: String, codes: &mut EncodeMap) {
     match node {
         HuffmanNode::Leaf { symbol, .. } => {
-            codes.insert(*symbol, prefix.clone());
+            let p = if !prefix.is_empty() {
+                prefix.clone()
+            } else {
+                "0".to_string()
+            };
+            codes.insert(*symbol, p.clone());
         }
         HuffmanNode::Internal { left, right, .. } => {
             generate_codes(left, format!("{}0", prefix), codes);
@@ -87,13 +92,13 @@ pub fn generate_codes(node: &HuffmanNode, prefix: String, codes: &mut EncodeMap)
     }
 }
 
-pub fn encode(text: &str, codes: &EncodeMap) -> BitVec<u8, Msb0> {
+pub fn encode(data: &[u8], codes: &EncodeMap) -> BitVec<u8, Msb0> {
     let mut bits = BitVec::new();
 
-    for ch in text.chars() {
+    for byte in data.iter() {
         let code = codes
-            .get(&ch)
-            .expect(&format!("Character without code: {}", ch));
+            .get(&byte)
+            .expect(&format!("Byte without code: 0x{:02X}", byte));
 
         for bit_char in code.chars() {
             bits.push(bit_char == '1');
@@ -103,9 +108,9 @@ pub fn encode(text: &str, codes: &EncodeMap) -> BitVec<u8, Msb0> {
     bits
 }
 
-pub fn decode(bytes: &[u8], total_bits: usize, code_map: &DecodeMap) -> String {
+pub fn decode(bytes: &[u8], total_bits: usize, code_map: &DecodeMap) -> Vec<u8> {
     let bits = BitVec::<u8, Msb0>::from_slice(bytes);
-    let mut result = String::new();
+    let mut result = vec![];
     let mut buf = String::new();
 
     for bit in bits.iter().by_vals().take(total_bits) {
@@ -144,13 +149,8 @@ pub fn save_compressed(
 
     // ── 4. tabela de códigos ──
     for (symbol, code) in encode_map {
-        let mut buf = [0u8; 4];
-        let symbol_str = symbol.encode_utf8(&mut buf);
-        let symbol_bytes = symbol_str.as_bytes();
-
-        // [len do símbolo em bytes: u8][bytes do símbolo]
-        file.write_all(&[symbol_bytes.len() as u8])?;
-        file.write_all(symbol_bytes)?;
+        // [símbolo: u8] — apenas 1 byte, sem variação de tamanho
+        file.write_all(&[*symbol])?;
 
         // [len do código em bits: u8][código como string ASCII '0'/'1']
         file.write_all(&[code.len() as u8])?;
@@ -194,23 +194,16 @@ pub fn load_compressed(input_path: &str) -> anyhow::Result<(DecodeMap, BitVec<u8
     let mut decode_map = HashMap::with_capacity(num_entries);
 
     for _ in 0..num_entries {
-        let mut len_buf = [0u8; 1];
+        let mut symbol_buf = [0u8; 1];
 
-        // len do símbolo
-        file.read_exact(&mut len_buf)?;
-        let symbol_len = len_buf[0] as usize;
-
-        let mut symbol_bytes = vec![0u8; symbol_len];
-        file.read_exact(&mut symbol_bytes)?;
-        let symbol = std::str::from_utf8(&symbol_bytes)
-            .unwrap()
-            .chars()
-            .next()
-            .unwrap();
+        // símbolo
+        file.read_exact(&mut symbol_buf)?;
+        let symbol = symbol_buf[0];
 
         // len do código
-        file.read_exact(&mut len_buf)?;
-        let code_len = len_buf[0] as usize;
+        let mut code_len_buf = [0u8; 1];
+        file.read_exact(&mut code_len_buf)?;
+        let code_len = code_len_buf[0] as usize;
 
         let mut code_bytes = vec![0u8; code_len];
         file.read_exact(&mut code_bytes)?;
